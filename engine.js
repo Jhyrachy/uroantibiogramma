@@ -344,12 +344,19 @@ function scegliDaAntibiogramma(risultati, contesto, proceduraId, sindromeId, RUL
     avvisi.push(`Resistenza a ${resistenti.length} antibiotici testati: pattern compatibile con multi-resistenza (MDR/ESBL). Considerare valutazione infettivologica anche se un farmaco risulta sensibile e a buona penetrazione.`);
   }
 
+  const formattaConMic = (r) => r.def.nome + (r.mic ? ` (MIC ${r.mic} mg/L)` : '');
+
+  if (risultati.some((r) => r.mic)) {
+    avvisi.push('I valori di MIC inseriti sono mostrati come riferimento grezzo: l\'app non applica breakpoint EUCAST/CLSI per interpretarli automaticamente (non ha una tabella di breakpoint per organismo+farmaco). La categoria S/I/R inserita resta l\'unico criterio usato dal motore — un MIC vicino al breakpoint di resistenza va valutato clinicamente anche se il referto lo classifica "S".');
+  }
+
   return {
     scelto: scelto.def.nome,
+    micScelto: scelto.mic || null,
     aware: scelto.def.aware,
     distretto_richiesto: requisito.distretto,
     origine_requisito: requisito.origine,
-    alternative: ordinati.slice(1).map((r) => r.def.nome),
+    alternative: ordinati.slice(1).map(formattaConMic),
     esclusi_per_allergia: esclusiPerAllergia.map((r) => ({ farmaco: r.def.nome, motivo: r.motivoAllergia })),
     esclusi_per_penetrazione: esclusiPerPenetrazione.map((r) => ({
       farmaco: r.def.nome,

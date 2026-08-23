@@ -14,8 +14,10 @@ const RULES = {
 };
 
 const state = {
-  antibiogramma: {}, // { antibioticoId: 'S'|'I'|'R' }
+  antibiogramma: {}, // { antibioticoId: { esito: 'S'|'I'|'R', mic: string|null } }
   allergie: [], // [{ tipo: 'molecola'|'classe', valore, gravita, note }]
+  nonConfermati: new Set(), // antibioticoId compilati da OCR e non ancora toccati dall'utente
+  germeNonConfermato: false,
 };
 
 function el(id) { return document.getElementById(id); }
@@ -24,8 +26,9 @@ function popolaSelect(selectEl, items, { valueKey = 'id', labelKey = 'nome' } = 
   selectEl.innerHTML = '';
   items.forEach((item) => {
     const opt = document.createElement('option');
-    opt.value = item[valueKey];
-    opt.textContent = item[labelKey];
+    const isStringa = typeof item === 'string';
+    opt.value = isStringa ? item : item[valueKey];
+    opt.textContent = isStringa ? item : item[labelKey];
     selectEl.appendChild(opt);
   });
 }
@@ -112,11 +115,24 @@ function initAllergieUi() {
   renderListaAllergie();
 }
 
+// ---------------------------------------------------------------------
+// Tabella antibiogramma — esito S/I/R + MIC opzionale (mg/L) per farmaco.
+// ---------------------------------------------------------------------
+function aggiornaAntibiogrammaDaCampi(id, sel, micInput) {
+  if (sel.value) {
+    state.antibiogramma[id] = { esito: sel.value, mic: micInput.value.trim() || null };
+  } else if (micInput.value.trim()) {
+    state.antibiogramma[id] = { esito: null, mic: micInput.value.trim() };
+  } else {
+    delete state.antibiogramma[id];
+  }
+}
+
 function costruisciTabellaAntibiogramma() {
   const container = el('antibiogramma-table');
   const table = document.createElement('table');
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Antibiotico</th><th>Esito</th></tr>';
+  thead.innerHTML = '<tr><th>Antibiotico</th><th>Esito</th><th>MIC (mg/L)</th></tr>';
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
 
@@ -124,6 +140,7 @@ function costruisciTabellaAntibiogramma() {
     const tr = document.createElement('tr');
     const tdNome = document.createElement('td');
     tdNome.textContent = ab.nome;
+
     const tdSel = document.createElement('td');
     const sel = document.createElement('select');
     sel.dataset.antibiotico = ab.id;
@@ -133,17 +150,31 @@ function costruisciTabellaAntibiogramma() {
       opt.textContent = v;
       sel.appendChild(opt);
     });
-    sel.addEventListener('change', () => {
-      if (sel.value) {
-        state.antibiogramma[ab.id] = sel.value;
-        sel.classList.remove('pending');
-      } else {
-        delete state.antibiogramma[ab.id];
-      }
-    });
     tdSel.appendChild(sel);
+
+    const tdMic = document.createElement('td');
+    const micInput = document.createElement('input');
+    micInput.type = 'text';
+    micInput.inputMode = 'decimal';
+    micInput.placeholder = '-';
+    micInput.className = 'mic-input';
+    micInput.dataset.antibiotico = ab.id;
+    tdMic.appendChild(micInput);
+
+    // Un vero interazione dell'utente (non l'auto-compilazione da OCR, che
+    // imposta .value senza sparare questi eventi) rimuove lo stato
+    // "da confermare" — vedi compilaAutomaticamenteDaOcr più sotto.
+    const confermaTocco = () => {
+      sel.classList.remove('auto-ocr');
+      micInput.classList.remove('auto-ocr');
+      state.nonConfermati.delete(ab.id);
+    };
+    sel.addEventListener('change', () => { confermaTocco(); aggiornaAntibiogrammaDaCampi(ab.id, sel, micInput); });
+    micInput.addEventListener('input', () => { confermaTocco(); aggiornaAntibiogrammaDaCampi(ab.id, sel, micInput); });
+
     tr.appendChild(tdNome);
     tr.appendChild(tdSel);
+    tr.appendChild(tdMic);
     tbody.appendChild(tr);
   });
 
@@ -152,18 +183,68 @@ function costruisciTabellaAntibiogramma() {
   container.appendChild(table);
 }
 
-function evidenziaSuggerimentiOcr(testoOcr) {
-  // Suggerimento best-effort: cerca il nome di ogni antibiotico nel testo
-  // OCR e, se presente, evidenzia la sua riga in giallo come promemoria
-  // "controlla questo valore" — NON imposta S/I/R da sola.
-  const righe = document.querySelectorAll('#antibiogramma-table select');
-  const testoLower = (testoOcr || '').toLowerCase();
-  righe.forEach((sel) => {
-    const ab = ANTIBIOTICI.find((a) => a.id === sel.dataset.antibiotico);
-    if (ab && testoLower.includes(ab.nome.toLowerCase().split('-')[0].split(' ')[0])) {
-      sel.classList.add('pending');
-    }
+// ---------------------------------------------------------------------
+// Compilazione automatica da testo OCR — best-effort, riga per riga:
+// cerca il nome di un antibiotico e, sulla stessa riga, un esito S/I/R
+// isolato e/o un valore di MIC. Imposta i campi SENZA sparare gli eventi
+// change/input (li lascia con classe "auto-ocr" = non ancora confermati
+// dall'utente): l'antibiogramma calcolato li usa comunque per mostrare
+// subito una raccomandazione, ma un banner in cima al risultato elenca
+// cosa va riverificato, ed evidenzia i campi corrispondenti in arancio.
+// ---------------------------------------------------------------------
+function estraiRisultatiDaOcr(testoOcr) {
+  const risultati = []; // { antibioticoId, esito, mic }
+  const righe = (testoOcr || '').split(/\n/);
+  righe.forEach((riga) => {
+    const rigaLower = riga.toLowerCase();
+    ANTIBIOTICI.forEach((ab) => {
+      const chiave = ab.nome.toLowerCase().split(/[-\s]/)[0];
+      if (chiave.length < 4) return;
+      const idx = rigaLower.indexOf(chiave);
+      if (idx === -1) return;
+      const resto = riga.slice(idx);
+      const esitoMatch = resto.match(/\b(S|I|R)\b/);
+      const micMatch = resto.match(/(?:MIC[:\s]*)?((?:[<>]=?\s?)?\d+(?:[.,]\d+)?)\s*(?:mg\/l|µg\/ml|ug\/ml)?/i);
+      if (esitoMatch || micMatch) {
+        risultati.push({
+          antibioticoId: ab.id,
+          esito: esitoMatch ? esitoMatch[1].toUpperCase() : null,
+          mic: micMatch ? micMatch[1].replace(',', '.').replace(/\s/g, '') : null,
+        });
+      }
+    });
   });
+  return risultati;
+}
+
+function trovaGermeInTesto(testoOcr) {
+  const testoLower = (testoOcr || '').toLowerCase();
+  return ORGANISMI.find((nome) => nome !== 'Altro / non elencato' && testoLower.includes(nome.toLowerCase()));
+}
+
+function compilaAutomaticamenteDaOcr(testoOcr) {
+  const trovati = estraiRisultatiDaOcr(testoOcr);
+  trovati.forEach((t) => {
+    const sel = document.querySelector(`#antibiogramma-table select[data-antibiotico="${t.antibioticoId}"]`);
+    const micInput = document.querySelector(`#antibiogramma-table input[data-antibiotico="${t.antibioticoId}"]`);
+    if (!sel || !micInput) return;
+    if (t.esito) sel.value = t.esito;
+    if (t.mic) micInput.value = t.mic;
+    sel.classList.add('auto-ocr');
+    micInput.classList.add('auto-ocr');
+    state.nonConfermati.add(t.antibioticoId);
+    state.antibiogramma[t.antibioticoId] = { esito: t.esito || null, mic: t.mic || null };
+  });
+
+  const germe = trovaGermeInTesto(testoOcr);
+  if (germe) {
+    const selGerme = el('germe');
+    selGerme.value = germe;
+    selGerme.classList.add('auto-ocr');
+    state.germeNonConfermato = true;
+  }
+
+  return { farmaciTrovati: trovati.length, germeTrovato: !!germe };
 }
 
 function cambiaStep(n) {
@@ -193,14 +274,25 @@ function renderEsclusi(titolo, esclusi) {
     esclusi.map((e) => `<li>${e.farmaco} — ${e.motivo}</li>`).join('') + '</ul>';
 }
 
+function renderBannerNonConfermati() {
+  if (state.nonConfermati.size === 0 && !state.germeNonConfermato) return '';
+  const nomiFarmaci = [...state.nonConfermati].map((id) => (ANTIBIOTICI.find((a) => a.id === id) || {}).nome).filter(Boolean);
+  const voci = [...(state.germeNonConfermato ? ['germe isolato'] : []), ...nomiFarmaci];
+  return `<div class="avviso avviso-forte">⚠️ Compilati automaticamente dall'OCR e NON ANCORA CONFERMATI: ${voci.join(', ')}.
+    La raccomandazione sotto li usa così come letti dall'OCR — controllali nella tabella allo step precedente
+    (evidenziati in arancio) prima di fidarti di questo risultato.</div>`;
+}
+
 function renderRisultato() {
   const ctx = contestoCorrente();
   const proceduraId = el('procedura').value;
   const sindromeId = el('sindrome').value;
-  const risultatiAntibiogramma = Object.entries(state.antibiogramma).map(([antibioticoId, esito]) => ({ antibioticoId, esito }));
+  const risultatiAntibiogramma = Object.entries(state.antibiogramma)
+    .filter(([, v]) => v.esito)
+    .map(([antibioticoId, v]) => ({ antibioticoId, esito: v.esito, mic: v.mic }));
 
   const out = el('risultato');
-  let html = '';
+  let html = renderBannerNonConfermati();
 
   // --- Terapia mirata da antibiogramma, se compilato ---
   if (risultatiAntibiogramma.length > 0) {
@@ -217,7 +309,7 @@ function renderRisultato() {
       if (r.distretto_richiesto) {
         html += `<p class="hint">Distretto da coprire: <strong>${r.distretto_richiesto}</strong> (${r.origine_requisito}).</p>`;
       }
-      html += `<div class="schema-item"><div class="farmaco">${r.scelto}${r.aware ? ` <span class="badge-aware badge-aware-${r.aware.toLowerCase()}">${r.aware}</span>` : ''}</div></div>`;
+      html += `<div class="schema-item"><div class="farmaco">${r.scelto}${r.micScelto ? ` <span class="hint">(MIC ${r.micScelto} mg/L)</span>` : ''}${r.aware ? ` <span class="badge-aware badge-aware-${r.aware.toLowerCase()}">${r.aware}</span>` : ''}</div></div>`;
       if (r.alternative && r.alternative.length) {
         html += `<p class="hint">Altre opzioni sensibili: ${r.alternative.join(', ')}</p>`;
       }
@@ -290,10 +382,19 @@ async function eseguiOcr() {
   btn.disabled = true;
   status.textContent = 'Inizializzazione motore OCR...';
   try {
+    // Path assoluti: dentro il Web Worker, i path relativi si risolvono
+    // rispetto alla posizione dello script del worker stesso (già dentro
+    // lib/), non rispetto alla pagina. Usiamo inoltre la build
+    // "wasm.js" autocontenuta (wasm incorporato in base64) invece della
+    // coppia .js+.wasm separata: quest'ultima fa sì che il loader
+    // provi a recuperare il file .wasm con un secondo fetch interno al
+    // worker la cui risoluzione dell'URL falliva ("is not a valid URL")
+    // anche con corePath assoluto — bug riprodotto e verificato il
+    // 2026-08-23. Costo: ~1.3 MB in più per l'overhead del base64.
     const worker = await Tesseract.createWorker('ita', 1, {
-      workerPath: 'lib/worker.min.js',
-      corePath: 'lib/tesseract-core-simd.js',
-      langPath: 'lib/lang',
+      workerPath: new URL('lib/worker.min.js', document.baseURI).href,
+      corePath: new URL('lib/tesseract-core-simd.wasm.js', document.baseURI).href,
+      langPath: new URL('lib/lang', document.baseURI).href,
       gzip: true,
       logger: (m) => {
         if (m.status) {
@@ -305,8 +406,10 @@ async function eseguiOcr() {
     const { data: { text } } = await worker.recognize(ultimoFile);
     await worker.terminate();
     el('ocr-text').value = text;
-    evidenziaSuggerimentiOcr(text);
-    status.textContent = 'Estrazione completata. Controlla e correggi manualmente i campi sotto (evidenziati in giallo dove il nome del farmaco compare nel testo).';
+    const { farmaciTrovati, germeTrovato } = compilaAutomaticamenteDaOcr(text);
+    status.textContent = farmaciTrovati || germeTrovato
+      ? `Estrazione completata: ${farmaciTrovati} valore/i e ${germeTrovato ? 'il germe' : 'nessun germe'} compilati automaticamente (evidenziati in arancio) — DA CONFERMARE uno per uno prima di fidarti del risultato.`
+      : 'Estrazione completata, ma non ho riconosciuto automaticamente farmaci o germe nel testo: compila i campi a mano confrontandoli col testo qui sopra.';
   } catch (e) {
     status.textContent = `Errore OCR: ${e.message}. Puoi comunque compilare i campi manualmente.`;
   } finally {
@@ -334,10 +437,15 @@ function initOcrInput() {
 function init() {
   popolaSelect(el('sindrome'), SINDROMI);
   popolaSelect(el('procedura'), PROCEDURE);
-  popolaSelect(el('germe'), ORGANISMI, { valueKey: 'nome', labelKey: 'nome' });
+  popolaSelect(el('germe'), ORGANISMI);
   costruisciTabellaAntibiogramma();
   initAllergieUi();
   initOcrInput();
+
+  el('germe').addEventListener('change', () => {
+    el('germe').classList.remove('auto-ocr');
+    state.germeNonConfermato = false;
+  });
 
   ['eta', 'peso', 'sesso', 'creatinina'].forEach((id) => el(id).addEventListener('input', aggiornaClcr));
   aggiornaClcr();
@@ -356,7 +464,12 @@ function init() {
     if (!confirm('Cancellare tutti i dati inseriti e iniziare un nuovo caso?')) return;
     state.antibiogramma = {};
     state.allergie = [];
-    document.querySelectorAll('#antibiogramma-table select').forEach((s) => { s.value = ''; s.classList.remove('pending'); });
+    state.nonConfermati.clear();
+    state.germeNonConfermato = false;
+    document.querySelectorAll('#antibiogramma-table select').forEach((s) => { s.value = ''; s.classList.remove('auto-ocr'); });
+    document.querySelectorAll('#antibiogramma-table input.mic-input').forEach((i) => { i.value = ''; i.classList.remove('auto-ocr'); });
+    el('germe').selectedIndex = 0;
+    el('germe').classList.remove('auto-ocr');
     renderListaAllergie();
     el('ocr-text').value = '';
     el('foto-preview').classList.add('hidden');

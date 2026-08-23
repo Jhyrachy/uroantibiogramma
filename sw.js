@@ -17,8 +17,7 @@ const ASSET_DA_CACHARE = [
   'manifest.json',
   'lib/tesseract.min.js',
   'lib/worker.min.js',
-  'lib/tesseract-core-simd.js',
-  'lib/tesseract-core-simd.wasm',
+  'lib/tesseract-core-simd.wasm.js',
 ];
 
 self.addEventListener('install', (event) => {

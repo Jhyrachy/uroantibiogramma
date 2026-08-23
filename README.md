@@ -122,6 +122,19 @@ antibiogramma sia agli schemi di profilassi perioperatoria (che passano
 automaticamente allo schema alternativo quando quello standard contiene
 un farmaco da escludere) sia alla terapia empirica per sindrome.
 
+### MIC: registrata, non interpretata automaticamente
+
+Oltre a S/I/R, la tabella dell'antibiogramma accetta un valore di MIC
+(mg/L) per farmaco, opzionale. L'app lo mostra come riferimento accanto
+al farmaco scelto, ma **non applica breakpoint EUCAST/CLSI per
+interpretarlo**: non ha (ancora) una tabella di breakpoint per ogni
+coppia organismo+farmaco, e inventarne una sarebbe rischioso quanto
+inventare una dose. La categoria S/I/R inserita manualmente resta l'unico
+criterio usato dal motore per decidere — la MIC è lì per il controllo
+manuale (es. un "S" con MIC vicina al breakpoint di resistenza merita più
+cautela di un "S" con MIC bassa), coerente col principio "il modello
+trascrive/registra, la logica ragiona solo su ciò che è esplicito".
+
 Le tabelle di `rules.js` (profilassi per procedura, terapia per sindrome,
 penetrazione per farmaco) sono comunque il punto di ingresso per
 correggere/aggiornare i contenuti: la logica in `engine.js` non contiene
@@ -139,10 +152,13 @@ alcun dato clinico, solo il modo di combinarli.
 3. Step 1 "Caso clinico" — contesto (sindrome clinica, intervento, funzione
    renale, allergie) e referto nella stessa schermata: fotografa/carica
    l'immagine e premi "Estrai testo" (la prima volta scarica ~7 MB di
-   modello lingua italiana, poi resta in cache), oppure compila a mano. Le
-   righe della tabella con un possibile riscontro nel testo OCR si
-   evidenziano in giallo come promemoria "da controllare" — il valore
-   S/I/R va sempre impostato manualmente.
+   modello lingua italiana, poi resta in cache), oppure compila a mano.
+   L'OCR **compila automaticamente** germe, esito S/I/R e MIC dove li
+   riconosce nel testo (best-effort, riga per riga) — ma li lascia
+   evidenziati in arancio come "non confermati": la raccomandazione allo
+   step 2 li usa comunque, con un banner in cima che elenca cosa
+   riverificare. Toccare un campo (anche solo per confermarlo com'è) lo
+   fa passare a "confermato" e toglie l'evidenziazione.
 4. Step 2 "Risultato" — raccomandazione, con badge di stato e fonte.
    "Stampa/esporta PDF" per il referto ambulatoriale.
 
@@ -157,7 +173,15 @@ alcun dato clinico, solo il modo di combinarli.
 - `app.js` — wiring dell'interfaccia, integrazione OCR.
 - `index.html`, `style.css` — struttura e stile, mobile-first.
 - `lib/` — Tesseract.js vendorizzato per l'OCR offline (motore +
-  dati lingua italiana).
+  dati lingua italiana). Usa la build "wasm.js" autocontenuta (wasm
+  incorporato in base64) invece della coppia .js+.wasm separata: quella
+  separata causava un bug reale in produzione (`Failed to parse URL from
+  tesseract-core-simd.wasm`, riprodotto e risolto il 2026-08-23) perché il
+  loader del core, eseguito dentro il Web Worker, non riusciva a risolvere
+  l'URL del file .wasm sorella anche con `corePath` assoluto. Costo:
+  ~1.3 MB in più di trasferimento per l'overhead del base64, unica opzione
+  trovata realmente affidabile in questo contesto (vedi anche nota sotto
+  su alternative a Tesseract.js).
 - `manifest.json`, `sw.js` — installabilità come PWA e cache offline.
 - `books/` — testi di riferimento per validare i contenuti clinici (EAU
   Guidelines 2026, Kucers, Mandell-Douglas-Bennett, WHO AWaRe). **Solo per
@@ -166,6 +190,29 @@ alcun dato clinico, solo il modo di combinarli.
   copiati insieme al resto quando distribuisci l'app (es. su GitHub
   Pages) — deploya solo `index.html`, `style.css`, `app.js`, `rules.js`,
   `engine.js`, `lib/`, `manifest.json`, `sw.js`, `icons/`.
+
+### Perché Tesseract.js e non un OCR più leggero
+
+Valutato e scartato, per restare coerenti col vincolo "nessun dato lascia
+il dispositivo":
+- **OCR cloud** (Google Vision, Azure Document Intelligence...): payload
+  client molto più leggero, ma richiede inviare la foto del referto a un
+  servizio esterno — in conflitto diretto con la privacy-by-design di
+  questa app. Restano un'opzione se un giorno si vuole un consenso
+  esplicito per-uso, non un default.
+- **API OCR native del browser** (es. Shape Detection API / TextDetector):
+  mai stabilizzata cross-browser, non disponibile su Safari/iOS — dove
+  probabilmente girerà questa PWA.
+- **OCR nativo di sistema** (Live Text su iOS, ML Kit su Android): non
+  richiamabile da una semplice pagina web, servirebbe un wrapper nativo
+  (es. Capacitor), perdendo la semplicità "apri il link e funziona".
+
+Tesseract.js resta quindi la scelta più solida per OCR interamente
+client-side. L'unico margine reale di alleggerimento già sfruttato: il
+modello lingua scaricato è quello "fast" (~7 MB) e non quello "best"
+(~15 MB+), e gli asset OCR (worker, core, lingua) si scaricano solo al
+primo utilizzo effettivo di "Estrai testo", non al caricamento della
+pagina.
 
 ## Privacy
 

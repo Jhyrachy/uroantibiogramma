@@ -383,11 +383,123 @@ const ORDINE_SPETTRO = [
   'gentamicina', 'amikacina', 'vancomicina', 'teicoplanina', 'linezolid',
 ];
 
+// ---------------------------------------------------------------------
+// Breakpoint EUCAST v16.1 (valida dal 2026-06-24) — SOLO le combinazioni
+// farmaco/organismo con un valore S≤/R> pulito, cioè un singolo numero
+// senza note in apice, parentesi ECOFF, "IE" (evidenza insufficiente),
+// "-" (resistenza intrinseca) o righe di solo screening (es. gentamicina/
+// amikacina contro enterococco, che in EUCAST non sono un breakpoint
+// clinico ma un test di resistenza ad alto livello).
+//
+// Verificato riga per riga sull'XML grezzo del file scaricato da
+// eucast.org (non sul solo testo estratto): molte celle "pulite in
+// apparenza" nascondevano in realtà una nota in apice concatenata al
+// numero (es. "16" + nota "1" → "161" nel testo grezzo). Le combinazioni
+// con questo tipo di annotazione sono state escluse di proposito, anche
+// quando il valore numerico sembrava plausibile — è una scelta
+// volutamente conservativa: 4 farmaci (amoxicillina-clavulanato,
+// piperacillina-tazobactam, cefazolina, fosfomicina) non hanno NESSUNA
+// combinazione pulita e restano quindi senza controllo breakpoint.
+//
+// contesto 'uti' = riga EUCAST "(uncomplicated UTI only)", usata per la
+// sindrome cistite non complicata / distretto "urina". contesto
+// 'sistemico' = riga generica, "iv", o "infections originating from the
+// urinary tract" (che in EUCAST include pielonefrite/batteriemia non
+// severa) — usata per gli altri distretti (rene, prostata, sistemico,
+// dispositivo), che nell'uso di quest'app sono comunque sempre infezioni
+// di origine urinaria. Quando esisteva UNA SOLA riga pulita e nessuna
+// controparte con lo stesso farmaco è stata esclusa per anomalia, il
+// valore è stato applicato a entrambi i contesti (nessuna distinzione
+// reale trovata in EUCAST); quando invece una riga alternativa esisteva
+// ma è stata esclusa per anomalia (es. cefuroxime iv), la distinzione è
+// stata rispettata lasciando l'altro contesto vuoto piuttosto che
+// riciclare un valore che EUCAST stessa tratta diversamente.
+// ---------------------------------------------------------------------
+
+const ENTEROBACTERALES_TUTTI = [
+  'Escherichia coli', 'Klebsiella pneumoniae', 'Proteus mirabilis',
+  'Enterobacter cloacae', 'Citrobacter freundii', 'Morganella morganii',
+  'Serratia marcescens',
+];
+const ENTEROBACTERALES_NO_SERRATIA = ENTEROBACTERALES_TUTTI.filter((o) => o !== 'Serratia marcescens');
+
+function bp(s, r) { return { s, r }; }
+function perOrganismi(organismi, uti, sistemico) {
+  const out = {};
+  organismi.forEach((o) => { out[o] = { uti: uti ? { ...uti } : null, sistemico: sistemico ? { ...sistemico } : null }; });
+  return out;
+}
+
+const BREAKPOINT_EUCAST = {
+  ampicillina: {
+    ...perOrganismi(ENTEROBACTERALES_TUTTI, bp(8, 8), bp(8, 8)),
+    'Enterococcus faecalis': { uti: bp(4, 4), sistemico: bp(4, 4) },
+    'Enterococcus faecium': { uti: bp(4, 4), sistemico: bp(4, 4) },
+  },
+  cefuroxime: perOrganismi(['Escherichia coli', 'Klebsiella pneumoniae', 'Proteus mirabilis'], bp(8, 8), null),
+  ceftriaxone: perOrganismi(ENTEROBACTERALES_TUTTI, bp(1, 2), bp(1, 2)),
+  cefixime: perOrganismi(ENTEROBACTERALES_TUTTI, bp(1, 1), null),
+  ceftazidime: perOrganismi(ENTEROBACTERALES_TUTTI, bp(1, 4), bp(1, 4)),
+  meropenem: {
+    ...perOrganismi(ENTEROBACTERALES_TUTTI, bp(2, 8), bp(2, 8)),
+    'Pseudomonas aeruginosa': { uti: bp(2, 8), sistemico: bp(2, 8) },
+  },
+  ertapenem: perOrganismi(ENTEROBACTERALES_TUTTI, bp(0.5, 0.5), bp(0.5, 0.5)),
+  gentamicina: perOrganismi(ENTEROBACTERALES_TUTTI, bp(2, 2), bp(2, 2)),
+  amikacina: {
+    ...perOrganismi(ENTEROBACTERALES_TUTTI, bp(8, 8), bp(8, 8)),
+    'Pseudomonas aeruginosa': { uti: bp(16, 16), sistemico: bp(16, 16) },
+  },
+  ciprofloxacina: {
+    ...perOrganismi(ENTEROBACTERALES_TUTTI, bp(0.25, 0.5), bp(0.25, 0.5)),
+    'Enterococcus faecalis': { uti: bp(4, 4), sistemico: null },
+    'Enterococcus faecium': { uti: bp(4, 4), sistemico: null },
+  },
+  levofloxacina: {
+    ...perOrganismi(ENTEROBACTERALES_TUTTI, bp(0.5, 1), bp(0.5, 1)),
+    'Enterococcus faecalis': { uti: bp(4, 4), sistemico: null },
+    'Enterococcus faecium': { uti: bp(4, 4), sistemico: null },
+  },
+  cotrimoxazolo: {
+    ...perOrganismi(ENTEROBACTERALES_NO_SERRATIA, bp(0.5, 0.5), bp(0.5, 0.5)),
+    'Staphylococcus aureus': { uti: bp(0.5, 0.5), sistemico: bp(0.5, 0.5) },
+    'Staphylococcus saprophyticus': { uti: bp(0.5, 0.5), sistemico: bp(0.5, 0.5) },
+  },
+  nitrofurantoina: {
+    'Escherichia coli': { uti: bp(64, 64), sistemico: null },
+    'Staphylococcus saprophyticus': { uti: bp(64, 64), sistemico: null },
+    'Enterococcus faecalis': { uti: bp(64, 64), sistemico: null },
+  },
+  vancomicina: {
+    'Staphylococcus aureus': { uti: bp(2, 2), sistemico: bp(2, 2) },
+    'Staphylococcus saprophyticus': { uti: bp(4, 4), sistemico: bp(4, 4) }, // valore "CoNS" EUCAST
+    'Enterococcus faecalis': { uti: bp(4, 4), sistemico: bp(4, 4) },
+    'Enterococcus faecium': { uti: bp(4, 4), sistemico: bp(4, 4) },
+  },
+  teicoplanina: {
+    'Staphylococcus aureus': { uti: bp(2, 2), sistemico: bp(2, 2) },
+    'Staphylococcus saprophyticus': { uti: bp(4, 4), sistemico: bp(4, 4) }, // valore "CoNS" EUCAST
+    'Enterococcus faecalis': { uti: bp(2, 2), sistemico: bp(2, 2) },
+    'Enterococcus faecium': { uti: bp(2, 2), sistemico: bp(2, 2) },
+  },
+  linezolid: {
+    'Staphylococcus aureus': { uti: bp(4, 4), sistemico: bp(4, 4) },
+    'Staphylococcus saprophyticus': { uti: bp(4, 4), sistemico: bp(4, 4) },
+    'Enterococcus faecalis': { uti: bp(4, 4), sistemico: bp(4, 4) },
+    'Enterococcus faecium': { uti: bp(4, 4), sistemico: bp(4, 4) },
+  },
+  // amox_clav, pip_tazo, cefazolina, fosfomicina: nessuna combinazione
+  // pulita trovata — nessuna voce qui, il motore dichiarerà "dato non
+  // disponibile" per questi farmaci, mai un valore inventato.
+};
+
+const FONTE_BREAKPOINT_EUCAST = 'EUCAST Clinical Breakpoint Tables v16.1 (valida dal 2026-06-24), estratto il 2026-08-23 — solo combinazioni farmaco/organismo con valore singolo privo di note/parentesi/ECOFF; copertura parziale per scelta deliberatamente conservativa (vedi commento sopra)';
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     STATO, ORGANISMI, ANTIBIOTICI, CLASSI_ANTIBIOTICI, GRAVITA_ALLERGIA,
     FAMIGLIE_BETA_LATTAMICHE, NOTA_CROSS_REATTIVITA_BETA_LATTAMICI,
     SINDROMI, PROCEDURE, SINDROME_REQUISITO_TESSUTALE, PROFILASSI_RULES,
-    TERAPIA_SINDROME, ORDINE_SPETTRO,
+    TERAPIA_SINDROME, ORDINE_SPETTRO, BREAKPOINT_EUCAST, FONTE_BREAKPOINT_EUCAST,
   };
 }

@@ -10,7 +10,7 @@ const RULES = {
   STATO, ORGANISMI, ANTIBIOTICI, CLASSI_ANTIBIOTICI, GRAVITA_ALLERGIA,
   FAMIGLIE_BETA_LATTAMICHE, NOTA_CROSS_REATTIVITA_BETA_LATTAMICI,
   SINDROMI, PROCEDURE, SINDROME_REQUISITO_TESSUTALE, PROFILASSI_RULES,
-  TERAPIA_SINDROME, ORDINE_SPETTRO,
+  TERAPIA_SINDROME, ORDINE_SPETTRO, BREAKPOINT_EUCAST, FONTE_BREAKPOINT_EUCAST,
 };
 
 const state = {
@@ -283,6 +283,21 @@ function renderBannerNonConfermati() {
     (evidenziati in arancio) prima di fidarti di questo risultato.</div>`;
 }
 
+function renderControlloBreakpoint(controlli) {
+  if (!controlli || !controlli.length) return '';
+  let html = '<div class="card">';
+  html += '<span class="stato-bozza">BOZZA — copertura parziale</span>';
+  html += '<h3>Controllo di coerenza MIC / breakpoint EUCAST</h3>';
+  html += '<p class="hint">Confronto automatico, solo dove disponibile un breakpoint EUCAST "pulito" (vedi fonte) — non copre tutti i farmaci.</p>';
+  controlli.forEach((c) => {
+    const cls = c.livello === 'incoerente' ? 'avviso-incoerente' : 'avviso';
+    html += `<div class="${cls}">${c.livello === 'incoerente' ? '⚠️' : '⚠'} <strong>${c.farmaco}</strong> — ${c.messaggio}</div>`;
+  });
+  html += `<div class="fonte">Fonte: ${FONTE_BREAKPOINT_EUCAST}</div>`;
+  html += '</div>';
+  return html;
+}
+
 function renderRisultato() {
   const ctx = contestoCorrente();
   const proceduraId = el('procedura').value;
@@ -293,6 +308,14 @@ function renderRisultato() {
 
   const out = el('risultato');
   let html = renderBannerNonConfermati();
+
+  // --- Controllo di coerenza MIC/breakpoint EUCAST, se ci sono MIC inserite ---
+  if (risultatiAntibiogramma.some((r) => r.mic)) {
+    const germeSelezionato = el('germe').value;
+    const requisito = determinaRequisitoTessutale(proceduraId, sindromeId, RULES);
+    const controlli = controllaCoerenzaBreakpoint(risultatiAntibiogramma, germeSelezionato, requisito.distretto, RULES);
+    html += renderControlloBreakpoint(controlli);
+  }
 
   // --- Terapia mirata da antibiogramma, se compilato ---
   if (risultatiAntibiogramma.length > 0) {

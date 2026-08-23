@@ -368,6 +368,72 @@ function scegliDaAntibiogramma(risultati, contesto, proceduraId, sindromeId, RUL
   };
 }
 
+/**
+ * Confronta una MIC inserita con il breakpoint EUCAST (solo copertura
+ * "pulita", vedi rules.js) per un germe+farmaco+distretto, e valuta se
+ * l'esito S/I/R inserito manualmente è coerente. Non decide nulla da
+ * sola: ritorna solo `disponibile: false` se manca un dato qualsiasi
+ * (germe non mappato, farmaco non coperto, contesto senza breakpoint
+ * pulito, MIC non inserita/non numerica) — mai un valore inventato.
+ */
+function valutaBreakpoint(organismo, antibioticoId, distretto, mic, esito, RULES) {
+  const tabella = RULES.BREAKPOINT_EUCAST[antibioticoId];
+  if (!tabella || !organismo || !tabella[organismo]) return { disponibile: false };
+  const contesto = distretto === 'urina' ? 'uti' : 'sistemico';
+  const entry = tabella[organismo][contesto];
+  if (!entry) return { disponibile: false };
+  if (mic == null || mic === '') return { disponibile: false };
+  const micNum = parseFloat(String(mic).replace(/[<>=]/g, ''));
+  if (Number.isNaN(micNum)) return { disponibile: false };
+
+  const atteso = micNum <= entry.s ? 'S' : (micNum > entry.r ? 'R' : 'I');
+  const fragile = atteso === 'S' && micNum >= entry.r / 2;
+
+  return {
+    disponibile: true,
+    atteso,
+    coerente: esito ? atteso === esito : null,
+    fragile,
+    s: entry.s,
+    r: entry.r,
+    contesto,
+  };
+}
+
+/**
+ * Applica valutaBreakpoint a tutti i risultati dell'antibiogramma che
+ * hanno una MIC inserita, e ritorna solo quelli con qualcosa da
+ * segnalare: esito incoerente col breakpoint (possibile errore di
+ * trascrizione, o resistenza non spiegata dalla sola MIC) oppure "S"
+ * fragile (MIC vicina alla soglia di resistenza). Silenzioso — nessun
+ * avviso — per tutto il resto, incluse le combinazioni non coperte.
+ */
+function controllaCoerenzaBreakpoint(risultati, organismo, distretto, RULES) {
+  const esiti = [];
+  (risultati || []).forEach((r) => {
+    if (!r.mic) return;
+    const def = RULES.ANTIBIOTICI.find((a) => a.id === r.antibioticoId);
+    if (!def) return;
+    const v = valutaBreakpoint(organismo, r.antibioticoId, distretto, r.mic, r.esito, RULES);
+    if (!v.disponibile) return;
+    const contestoLabel = v.contesto === 'uti' ? 'cistite non complicata' : 'infezione di origine urinaria (non solo cistite semplice)';
+    if (v.coerente === false) {
+      esiti.push({
+        farmaco: def.nome,
+        livello: 'incoerente',
+        messaggio: `MIC ${r.mic} mg/L con breakpoint EUCAST S≤${v.s}/R>${v.r} mg/L (${organismo}, ${contestoLabel}) corrisponderebbe a "${v.atteso}", ma è stato inserito "${r.esito}". Verificare: possibile errore di trascrizione dal referto, oppure meccanismo di resistenza non riflesso dal solo valore di MIC.`,
+      });
+    } else if (v.fragile) {
+      esiti.push({
+        farmaco: def.nome,
+        livello: 'fragile',
+        messaggio: `MIC ${r.mic} mg/L vicina alla soglia di resistenza EUCAST (S≤${v.s}/R>${v.r} mg/L, ${organismo}): "S" formalmente corretto ma con margine ridotto, più a rischio di fallimento clinico di un "S" con MIC bassa.`,
+      });
+    }
+  });
+  return esiti;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     calcolaClearanceCreatinina,
@@ -379,5 +445,7 @@ if (typeof module !== 'undefined' && module.exports) {
     trovaAllergiaPerFarmaco,
     escludeAllergia,
     avvisiFarmaco,
+    valutaBreakpoint,
+    controllaCoerenzaBreakpoint,
   };
 }

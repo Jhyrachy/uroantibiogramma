@@ -122,18 +122,44 @@ antibiogramma sia agli schemi di profilassi perioperatoria (che passano
 automaticamente allo schema alternativo quando quello standard contiene
 un farmaco da escludere) sia alla terapia empirica per sindrome.
 
-### MIC: registrata, non interpretata automaticamente
+### MIC e breakpoint EUCAST: controllo di coerenza, non interpretazione sostitutiva
 
 Oltre a S/I/R, la tabella dell'antibiogramma accetta un valore di MIC
-(mg/L) per farmaco, opzionale. L'app lo mostra come riferimento accanto
-al farmaco scelto, ma **non applica breakpoint EUCAST/CLSI per
-interpretarlo**: non ha (ancora) una tabella di breakpoint per ogni
-coppia organismo+farmaco, e inventarne una sarebbe rischioso quanto
-inventare una dose. La categoria S/I/R inserita manualmente resta l'unico
-criterio usato dal motore per decidere — la MIC è lì per il controllo
-manuale (es. un "S" con MIC vicina al breakpoint di resistenza merita più
-cautela di un "S" con MIC bassa), coerente col principio "il modello
-trascrive/registra, la logica ragiona solo su ciò che è esplicito".
+(mg/L) per farmaco, opzionale. Se presente, l'app la confronta con i
+breakpoint ufficiali EUCAST v16.1 (`books/eucast_breakpoints_v16.1.xlsx`,
+non nel repository per copyright — vedi sotto) e segnala due cose, MAI
+correggendo da sola l'S/I/R inserito:
+
+- **incoerenza**: la MIC, secondo il breakpoint EUCAST per quel germe e
+  quel farmaco, corrisponderebbe a una categoria diversa da quella
+  inserita (es. MIC che indicherebbe "R" ma il campo dice "S") — segnala
+  possibile errore di trascrizione dal referto o un meccanismo di
+  resistenza non colto dalla sola MIC;
+- **"S" fragile**: l'esito è coerente ma la MIC è vicina alla soglia di
+  resistenza — un margine più a rischio di fallimento clinico rispetto a
+  un "S" con MIC bassa (è la spiegazione data all'utente nella
+  conversazione: due isolati entrambi "S" allo stesso farmaco possono
+  avere margini di sicurezza molto diversi).
+
+**Copertura volutamente parziale.** EUCAST non è una tabella pulita a due
+colonne: è piena di note, valori "ECOFF" tra parentesi (da trattare con
+più cautela), voci "-" (resistenza intrinseca, non testare), "IE"
+(evidenza insufficiente) e righe che sono test di screening e non
+breakpoint clinici (es. gentamicina/amikacina contro enterococco). Ogni
+cella è stata verificata sull'XML grezzo del file scaricato da
+eucast.org — non solo sul testo estratto — perché diverse celle
+apparentemente pulite nascondevano in realtà una nota in apice
+concatenata al numero (es. "16" + nota "1" → "161" nel testo grezzo).
+Solo le combinazioni farmaco/organismo con un valore singolo, senza
+alcuna di queste complicazioni, sono state codificate in
+`BREAKPOINT_EUCAST` in `rules.js`: 16 dei 20 farmaci hanno una copertura
+almeno parziale, 4 (amoxicillina-clavulanato, piperacillina-tazobactam,
+cefazolina, fosfomicina) non hanno nessuna combinazione pulita e restano
+quindi senza controllo — dichiarato esplicitamente nel codice, non
+un'omissione silenziosa. Vedi il commento in cima a `BREAKPOINT_EUCAST`
+per il ragionamento completo, incluso come viene scelto se usare il
+breakpoint "cistite non complicata" o quello "infezione di origine
+urinaria" a seconda del distretto richiesto dal caso clinico.
 
 Le tabelle di `rules.js` (profilassi per procedura, terapia per sindrome,
 penetrazione per farmaco) sono comunque il punto di ingresso per
@@ -166,8 +192,8 @@ alcun dato clinico, solo il modo di combinarli.
 
 - `rules.js` — tutto il contenuto clinico (organismi, antibiotici con
   penetrazione tissutale, procedure, regole di profilassi, regole di
-  terapia per sindrome). Nessuna logica qui, solo dati con `fonte` e
-  `stato`.
+  terapia per sindrome, breakpoint EUCAST). Nessuna logica qui, solo dati
+  con `fonte` e `stato`.
 - `engine.js` — funzioni pure che applicano le regole al contesto del
   paziente. Nessun contenuto clinico qui, solo il "come combinare".
 - `app.js` — wiring dell'interfaccia, integrazione OCR.

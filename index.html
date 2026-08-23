@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>UroAntibiogramma — supporto decisionale</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b5f6b">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <h1>UroAntibiogramma</h1>
+  <span class="badge-draft">BOZZA — non validato clinicamente</span>
+</header>
+
+<div class="disclaimer" id="disclaimer">
+  <strong>Attenzione.</strong> Questo strumento è un prototipo di supporto decisionale, non un dispositivo medico
+  certificato. Il contenuto clinico (scelta di antibiotico, dose, durata) è uno scaffold basato su linee guida
+  generali (EAU Guidelines on Urological Infections) <strong>non ancora validato</strong> dal medico responsabile.
+  Ogni raccomandazione va confermata clinicamente prima di essere applicata a un paziente reale. I dati restano
+  solo su questo dispositivo: nessuna informazione viene inviata a server esterni.
+  <br><br>
+  <strong>Versione dimostrativa pubblicata online.</strong> Non è destinata all'uso su pazienti reali finché
+  il contenuto clinico non sarà validato. L'app non chiede né salva nomi, cognomi o codici fiscali: non
+  inserire comunque alcun dato che possa identificare una persona reale.
+  <button id="disclaimer-ok" type="button">Ho capito, prosegui</button>
+</div>
+
+<main id="app" class="hidden">
+
+  <nav class="steps">
+    <button class="step-btn active" data-step="1">1. Caso clinico</button>
+    <button class="step-btn" data-step="2">2. Risultato</button>
+  </nav>
+
+  <!-- STEP 1: CASO CLINICO (contesto paziente + referto) -->
+  <section id="step-1" class="step active">
+    <h2>Contesto paziente</h2>
+
+    <fieldset>
+      <legend>Sindrome clinica</legend>
+      <select id="sindrome"></select>
+      <p class="hint">Usalo per i casi ambulatoriali (con o senza intervento). "Solo copertura pre-procedura" se l'unico obiettivo è la profilassi chirurgica.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Intervento previsto</legend>
+      <select id="procedura"></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Funzione renale (opzionale, per avvisi di aggiustamento dose)</legend>
+      <div class="row">
+        <label>Età (anni) <input type="number" id="eta" min="0" max="120"></label>
+        <label>Peso (kg) <input type="number" id="peso" min="0" max="300"></label>
+      </div>
+      <div class="row">
+        <label>Sesso
+          <select id="sesso">
+            <option value="M">M</option>
+            <option value="F">F</option>
+          </select>
+        </label>
+        <label>Creatinina (mg/dl) <input type="number" step="0.01" id="creatinina"></label>
+      </div>
+      <p class="hint" id="clcr-out"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Allergie</legend>
+      <p class="hint">Puoi aggiungere più allergie: a una molecola specifica o a un'intera classe. La gravità conta —
+        una reazione severa ritardata (SJS/TEN, DRESS) esclude l'intera famiglia beta-lattamica, una reazione lieve
+        esclude solo quanto dichiarato e segnala il resto con un avviso.</p>
+      <div class="row">
+        <label>Tipo <select id="allergia-tipo"></select></label>
+        <label>Gravità <select id="allergia-gravita"></select></label>
+      </div>
+      <label>Molecola/classe <select id="allergia-valore"></select></label>
+      <label>Note (facoltativo) <input type="text" id="allergia-note" placeholder="es. anno della reazione, contesto..."></label>
+      <button type="button" class="btn-secondary" id="allergia-aggiungi">+ Aggiungi allergia</button>
+      <div id="allergie-lista" class="allergie-lista"></div>
+    </fieldset>
+
+    <h2>Referto urinocoltura</h2>
+    <p class="hint">Puoi compilare manualmente, oppure fotografare/caricare il referto: il testo estratto (OCR)
+      resta a fianco come riferimento, ma <strong>ogni campo va confermato a mano</strong> — l'app non compila
+      automaticamente sensibilità/resistenza da sola, per evitare errori di lettura su un dato critico.</p>
+
+    <div class="ocr-box">
+      <input type="file" id="foto-input" accept="image/*" capture="environment">
+      <button id="ocr-run" class="btn-secondary" disabled>Estrai testo dalla foto</button>
+      <div id="ocr-status" class="hint"></div>
+      <img id="foto-preview" class="hidden">
+      <textarea id="ocr-text" placeholder="Il testo estratto dall'OCR comparirà qui come riferimento..." rows="6"></textarea>
+    </div>
+
+    <fieldset>
+      <legend>Germe isolato</legend>
+      <select id="germe"></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Antibiogramma</legend>
+      <p class="hint">Segna S (sensibile) / I (intermedio) / R (resistente) per ogni farmaco testato nel referto. Lascia "—" per i farmaci non testati.</p>
+      <div id="antibiogramma-table"></div>
+    </fieldset>
+
+    <button class="btn-primary" id="go-step-2">Avanti: risultato →</button>
+  </section>
+
+  <!-- STEP 2: RISULTATO -->
+  <section id="step-2" class="step">
+    <h2>Raccomandazione</h2>
+    <div id="risultato"></div>
+    <div class="nav-row">
+      <button class="btn-secondary" id="back-step-1">← Indietro</button>
+      <button class="btn-secondary" id="stampa">Stampa / esporta PDF</button>
+      <button class="btn-secondary" id="nuovo-caso">Nuovo caso</button>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>UroAntibiogramma — prototipo locale, nessun dato lascia il dispositivo. Contenuto clinico da validare prima dell'uso su pazienti reali.</p>
+</footer>
+
+<script src="lib/tesseract.min.js"></script>
+<script src="rules.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

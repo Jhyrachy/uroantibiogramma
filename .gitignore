@@ -1,0 +1,8 @@
+# Testi di riferimento — protetti da copyright, mai nel repository.
+# Vedi README.md "Struttura" per i dettagli.
+books/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
